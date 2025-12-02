@@ -8,6 +8,7 @@
 ## ✨ Features
 
 - **📸 Image Recognition**: Simply feed it a screenshot of the puzzle, and it uses Tesseract OCR to read the tiles automatically.
+- **🧹 Smart Noise Filtering**: Uses confidence scores to automatically filter out UI elements and visual artifacts (like 'ey').
 - **📚 Tournament-Grade Dictionary**: Powered by the **TWL06** (Tournament Word List) dictionary to ensure every found word is legitimate.
 - **⚡️ Blazing Fast**: efficiently generates and checks thousands of permutations in milliseconds.
 - **🔍 Side-by-Side Comparison**: (Optional) Can be configured to check against multiple dictionaries to find even the most obscure words.
@@ -17,7 +18,7 @@
 ### Prerequisites
 
 1.  **Python 3.8+**: Make sure you have Python installed.
-2.  **Tesseract OCR**: Required for image recognition.
+2.  **Tesseract OCR (v4.0+)**: Required for image recognition and TSV output.
     -   **macOS**: `brew install tesseract`
     -   **Ubuntu**: `sudo apt-get install tesseract-ocr`
     -   **Windows**: [Download Installer](https://github.com/UB-Mannheim/tesseract/wiki)

@@ -77,17 +77,62 @@ def extract_tiles_from_image(image_path: str) -> List[str]:
     """
     print(f"Extracting tiles from '{image_path}' using Tesseract...")
     try:
-        # Run tesseract to extract text to stdout
+        # Run tesseract to extract text to TSV format (includes confidence scores)
+        # Use --psm 4 (Single column of text of variable sizes)
         result = subprocess.run(
-            ['tesseract', image_path, 'stdout'],
+            ['tesseract', image_path, 'stdout', '--psm', '4', 'tsv'],
             capture_output=True,
             text=True,
             check=True
         )
 
-        # Process output: split by lines, strip whitespace, remove empty lines
-        raw_text = result.stdout
-        tiles = [line.strip().lower() for line in raw_text.split('\n') if line.strip()]
+        # Process TSV output
+        # TSV header: level page_num block_num par_num line_num word_num left top width height conf text
+        tiles = []
+        raw_lines = result.stdout.strip().split('\n')
+        
+        # Skip header row
+        if len(raw_lines) > 0:
+            # Find the index of 'conf' and 'text' columns
+            header = raw_lines[0].split('\t')
+            try:
+                conf_idx = header.index('conf')
+                text_idx = header.index('text')
+            except ValueError:
+                print("Error: Unexpected TSV format from Tesseract.")
+                return []
+
+            for line in raw_lines[1:]:
+                parts = line.split('\t')
+                # Ensure line has enough columns
+                if len(parts) <= max(conf_idx, text_idx):
+                    continue
+                
+                conf_str = parts[conf_idx]
+                text = parts[text_idx]
+                
+                # Skip empty text or invalid confidence
+                if not text.strip() or conf_str == '-1':
+                    continue
+                    
+                try:
+                    conf = float(conf_str)
+                except ValueError:
+                    continue
+
+                # Filter by confidence (threshold 60%)
+                if conf < 60:
+                    continue
+
+                # Clean and filter text
+                # Check for uppercase BEFORE cleaning (noise often has mixed case)
+                if any(c.isupper() for c in text):
+                    continue
+                    
+                cleaned = ''.join(filter(str.isalpha, text)).lower()
+                
+                if len(cleaned) >= 2:
+                    tiles.append(cleaned)
         
         return tiles
 
