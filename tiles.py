@@ -1,25 +1,8 @@
 """
 Quartiles Solver
-================
 
-A robust solver for the "Quartiles" word puzzle game.
-
-This script identifies valid English words formed by combining a set of "tiles" (syllables/word parts).
-It supports:
-1.  **Image Input**: Automatically extracts tiles from a screenshot using OCR (Tesseract).
-2.  **Dictionary Validation**: Uses the TWL06 (Tournament Word List) dictionary for high accuracy.
-3.  **Permutation Logic**: Efficiently generates and checks all possible tile combinations.
-
-Usage:
-    python3 tiles.py [image_path]
-
-    Example:
-        python3 tiles.py tiles.png
-        python3 tiles.py  # Uses default fallback tiles if no image provided
-
-Dependencies:
-    - python3
-    - tesseract (for OCR)
+Solves Quartiles word puzzles by finding valid word combinations from tiles.
+Uses TWL06 dictionary with minimal filtering to avoid false negatives.
 """
 
 import argparse
@@ -30,24 +13,16 @@ import sys
 import urllib.request
 from typing import List, Set, Tuple, Dict
 
-# Default tiles to use if no image is provided (Fallback/Demo mode)
 DEFAULT_TILES = [
     "far", "ci", "ca", "lly", "rec", "ep", "tac", "les", "cap", "itu",
     "la", "te", "jou", "rn", "al", "ing", "aft", "er", "tho", "ught"
 ]
 
-# Configuration
 DICTIONARY_URL = 'https://raw.githubusercontent.com/jessicatysu/scrabble/master/TWL06.txt'
 DICTIONARY_FILENAME = 'twl06.txt'
 
 
 def load_dictionary() -> Set[str]:
-    """
-    Loads the TWL06 dictionary from a local file, downloading it if necessary.
-
-    Returns:
-        Set[str]: A set of valid English words (lowercase).
-    """
     if not os.path.exists(DICTIONARY_FILENAME):
         print(f"Downloading dictionary from {DICTIONARY_URL}...")
         try:
@@ -58,43 +33,43 @@ def load_dictionary() -> Set[str]:
 
     try:
         with open(DICTIONARY_FILENAME, 'r') as f:
-            # Filter for words with at least 2 letters to avoid noise
             return set(word.strip().lower() for word in f if len(word.strip()) >= 2)
     except FileNotFoundError:
         print(f"Error: Dictionary file '{DICTIONARY_FILENAME}' not found.")
         return set()
 
 
-def extract_tiles_from_image(image_path: str) -> List[str]:
-    """
-    Extracts text tiles from a given image using Tesseract OCR.
+def classify_word(word: str) -> List[str]:
+    tags = []
+    if len(word) <= 3 and all(c in 'bcdfghjklmnpqrstvwxyz' for c in word):
+        tags.append('abbreviation')
+    return tags
 
-    Args:
-        image_path (str): Path to the input image file.
 
-    Returns:
-        List[str]: A list of extracted tiles (strings).
-    """
-    print(f"Extracting tiles from '{image_path}' using Tesseract...")
+def filter_words(words: Set[str]) -> Set[str]:
+    filtered = set()
+    profanity = {'fuck', 'shit', 'bitch', 'dick', 'piss', 'cock', 'cunt', 'twat', 'ass', 'damn', 'hell'}
+    for word in words:
+        if word.isalpha() and word not in profanity:
+            filtered.add(word)
+    return filtered
+
+
+def extract_tiles_from_image(image_path: str, psm_mode: int = 6) -> List[str]:
+    print(f"Extracting tiles from '{image_path}' using Tesseract (PSM {psm_mode})...")
     try:
-        # Run tesseract to extract text to TSV format (includes confidence scores)
-        # Use --psm 4 (Single column of text of variable sizes)
         result = subprocess.run(
-            ['tesseract', image_path, 'stdout', '--psm', '4', 'tsv'],
+            ['tesseract', image_path, 'stdout', '--psm', str(psm_mode), 'tsv'],
             capture_output=True,
             text=True,
             check=True
         )
 
-        # Process TSV output
-        # TSV header: level page_num block_num par_num line_num word_num left top width height conf text
         tiles = []
-        raw_lines = result.stdout.strip().split('\n')
+        lines = result.stdout.strip().split('\n')
         
-        # Skip header row
-        if len(raw_lines) > 0:
-            # Find the index of 'conf' and 'text' columns
-            header = raw_lines[0].split('\t')
+        if len(lines) > 0:
+            header = lines[0].split('\t')
             try:
                 conf_idx = header.index('conf')
                 text_idx = header.index('text')
@@ -102,16 +77,14 @@ def extract_tiles_from_image(image_path: str) -> List[str]:
                 print("Error: Unexpected TSV format from Tesseract.")
                 return []
 
-            for line in raw_lines[1:]:
+            for line in lines[1:]:
                 parts = line.split('\t')
-                # Ensure line has enough columns
                 if len(parts) <= max(conf_idx, text_idx):
                     continue
                 
                 conf_str = parts[conf_idx]
                 text = parts[text_idx]
                 
-                # Skip empty text or invalid confidence
                 if not text.strip() or conf_str == '-1':
                     continue
                     
@@ -120,12 +93,9 @@ def extract_tiles_from_image(image_path: str) -> List[str]:
                 except ValueError:
                     continue
 
-                # Filter by confidence (threshold 60%)
-                if conf < 60:
+                if conf < 70:
                     continue
 
-                # Clean and filter text
-                # Check for uppercase BEFORE cleaning (noise often has mixed case)
                 if any(c.isupper() for c in text):
                     continue
                     
@@ -146,94 +116,121 @@ def extract_tiles_from_image(image_path: str) -> List[str]:
 
 
 def find_combinations(tiles: List[str], max_length: int = 4) -> List[Tuple[Tuple[str, ...], str]]:
-    """
-    Generates all possible permutations of tiles up to a maximum length.
-
-    Args:
-        tiles (List[str]): The list of available tiles.
-        max_length (int): The maximum number of tiles to combine (default: 4).
-
-    Returns:
-        List[Tuple[Tuple[str, ...], str]]: A list of tuples, where each tuple contains:
-            - The tuple of tiles used (e.g., ('jou', 'rn', 'al'))
-            - The combined word string (e.g., 'journal')
-    """
     results = []
-    # Generate permutations of length 1 to max_length
     for r in range(1, max_length + 1):
         for combo in itertools.permutations(tiles, r):
-            word = ''.join(combo)
-            results.append((combo, word))
+            results.append((combo, ''.join(combo)))
     return results
 
 
+def print_tiles_grid(tiles: List[str]):
+    cols = 4
+    for i in range(0, len(tiles), cols):
+        row = tiles[i:i+cols]
+        formatted_row = '  '.join(f'{t:8}' for t in row)
+        print(f"  {formatted_row}")
+
+
 def main():
-    """
-    Main execution function.
-    """
     parser = argparse.ArgumentParser(description='Solve Quartiles puzzle.')
     parser.add_argument('image_path', nargs='?', help='Path to the puzzle image (optional)')
+    parser.add_argument('--min-length', type=int, default=2,
+                       help='Minimum word length to include (default: 2)')
+    parser.add_argument('--tiles', type=str, nargs='+',
+                       help='Manually specify tiles (space-separated). Overrides image extraction.')
+    parser.add_argument('--ocr-psm', type=int, default=6, choices=[4, 6, 11],
+                       help='Tesseract PSM mode: 6=uniform block (default), 4=single column, 11=sparse text')
     args = parser.parse_args()
 
-    # 1. Determine Tiles Source
-    if args.image_path:
+    if args.tiles:
+        tiles = [t.lower().strip() for t in args.tiles]
+        print(f"Using manually specified tiles ({len(tiles)} total):")
+        print()
+        print_tiles_grid(tiles)
+        print()
+        print(f"Tiles list: {tiles}")
+    elif args.image_path:
         if not os.path.exists(args.image_path):
             print(f"Error: File '{args.image_path}' not found.")
             sys.exit(1)
-        tiles = extract_tiles_from_image(args.image_path)
+        tiles = extract_tiles_from_image(args.image_path, args.ocr_psm)
         if not tiles:
             print("Error: No tiles found in the image or OCR failed.")
+            print("Tip: Try --ocr-psm 6 or --ocr-psm 11, or use --tiles to specify manually")
             sys.exit(1)
-        print(f"Found {len(tiles)} tiles: {tiles}")
+        print(f"Found {len(tiles)} tiles:")
+        print()
+        print_tiles_grid(tiles)
+        print()
+        print(f"Tiles list: {tiles}")
+        print("Tip: If tiles look incorrect, try --ocr-psm 6 or --ocr-psm 11, or use --tiles to override")
     else:
         print("No image provided. Using default demo tiles.")
         tiles = DEFAULT_TILES
 
-    # 2. Load Dictionary
-    valid_words = load_dictionary()
-    if not valid_words:
-        print("Error: Could not load dictionary. Exiting.")
+    print("Loading dictionary...")
+    all_words = load_dictionary()
+    if not all_words:
+        print("Error: Could not load TWL06 dictionary. Exiting.")
         sys.exit(1)
+    
+    print(f"Loaded {len(all_words)} words from TWL06.")
+    print("Applying minimal filter (only profanity excluded)...")
+    valid_words = filter_words(all_words)
+    print(f"Using {len(valid_words)} words.")
 
-    # 3. Find Combinations
     print("Finding combinations...")
     all_combinations = find_combinations(tiles)
 
-    # 4. Filter and Organize Results
-    # Structure: { num_tiles: [(tile_combo, word), ...] }
-    organized: Dict[int, List[Tuple[Tuple[str, ...], str]]] = {1: [], 2: [], 3: [], 4: []}
+    organized: Dict[int, List[Tuple[Tuple[str, ...], str, List[str]]]] = {1: [], 2: [], 3: [], 4: []}
     
     for tiles_combo, word in all_combinations:
+        if len(word) < args.min_length:
+            continue
         if word in valid_words:
-            organized[len(tiles_combo)].append((tiles_combo, word))
+            tags = classify_word(word)
+            organized[len(tiles_combo)].append((tiles_combo, word, tags))
 
-    # 5. Print Results
     total_found = 0
+    questionable_count = 0
+    
     for num_tiles in range(1, 5):
         if organized[num_tiles]:
             print(f"\n--- {num_tiles} Tile Combinations ---")
             
-            # Deduplicate by word to avoid printing same word multiple times if tiles repeat
             unique_entries = {}
-            for tiles_combo, word in organized[num_tiles]:
+            for tiles_combo, word, tags in organized[num_tiles]:
                 if word not in unique_entries:
-                    unique_entries[word] = tiles_combo
+                    unique_entries[word] = (tiles_combo, tags)
             
-            # Sort alphabetically
-            sorted_words = sorted(unique_entries.keys())
+            sorted_words = sorted(unique_entries.keys(), 
+                                key=lambda w: (len(unique_entries[w][1]) > 0, w))
+            
+            # Calculate max width for alignment
+            max_width = max(len(' + '.join(unique_entries[w][0])) for w in sorted_words)
             
             for word in sorted_words:
-                tiles_combo = unique_entries[word]
-                print(f"{' + '.join(tiles_combo)} = {word}")
+                tiles_combo, tags = unique_entries[word]
+                left_side = ' + '.join(tiles_combo)
+                if tags:
+                    tag_str = ' [' + ', '.join(tags) + ']'
+                    print(f"{left_side:<{max_width}} = {word}{tag_str}")
+                    questionable_count += 1
+                else:
+                    print(f"{left_side:<{max_width}} = {word}")
                 
             total_found += len(unique_entries)
-            print(f"Count: {len(unique_entries)}")
+            questionable = sum(1 for w in unique_entries if len(unique_entries[w][1]) > 0)
+            print(f"Count: {len(unique_entries)} ({questionable} may need review)")
 
-    # 6. Summary
     print("\n" + "="*30)
     print(f"SUMMARY")
     print("="*30)
-    print(f"Total real words found: {total_found}")
+    print(f"Total words found: {total_found}")
+    if questionable_count > 0:
+        print(f"Words needing review: {questionable_count} (marked with [abbreviation])")
+    if args.min_length > 2:
+        print(f"Minimum length: {args.min_length}")
     print("="*30)
 
 
