@@ -128,14 +128,14 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 p-4 md:p-8">
+    <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-5xl font-bold text-gray-900 mb-2">
+          <h1 className="text-5xl font-bold text-gray-900 dark:text-white mb-2">
             🧩 Quartiles Solver
           </h1>
-          <p className="text-gray-600 text-lg">
+          <p className="text-gray-600 dark:text-gray-300 text-lg">
             Find all valid word combinations from puzzle tiles
           </p>
         </div>
@@ -143,12 +143,12 @@ export default function Home() {
         {/* Main Content */}
         <div className="grid md:grid-cols-2 gap-6 mb-6">
           {/* Input Section */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-2xl font-semibold mb-4 text-gray-800">Input Tiles</h2>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-white">Input Tiles</h2>
             
             {/* Image Upload */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Upload Puzzle Image
               </label>
               <div className="flex items-center gap-4 mb-4">
@@ -169,13 +169,13 @@ export default function Home() {
                 <select
                   value={psmMode}
                   onChange={(e) => setPsmMode(Number(e.target.value))}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
                   <option value={6}>PSM 6 (Uniform Block)</option>
                   <option value={4}>PSM 4 (Single Column)</option>
                   <option value={11}>PSM 11 (Sparse Text)</option>
                 </select>
-                <label className="flex items-center gap-2 text-sm">
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                   <input
                     type="checkbox"
                     checked={showDebug}
@@ -186,7 +186,7 @@ export default function Home() {
                 </label>
               </div>
               {imagePreview && (
-                <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+                <div className="mt-4 border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-700">
                   <img
                     src={imagePreview}
                     alt="Uploaded puzzle"
@@ -196,12 +196,12 @@ export default function Home() {
                 </div>
               )}
               {ocrStatus && (
-                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg">
                   <div className="flex items-center gap-2">
                     {loading && (
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
                     )}
-                    <span className="text-sm text-blue-700 font-medium">{ocrStatus}</span>
+                    <span className="text-sm text-blue-700 dark:text-blue-300 font-medium">{ocrStatus}</span>
                   </div>
                 </div>
               )}
@@ -209,7 +209,7 @@ export default function Home() {
 
             {/* Manual Entry */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Or Enter Tiles Manually
               </label>
               <div className="flex gap-2">
@@ -218,7 +218,7 @@ export default function Home() {
                   value={manualTiles}
                   onChange={(e) => setManualTiles(e.target.value)}
                   placeholder="cli ta ous ci sul ni con da..."
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       handleManualTiles();
@@ -237,13 +237,13 @@ export default function Home() {
             {/* Settings */}
             <div className="space-y-4 mb-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Dictionary
                 </label>
                 <select
                   value={dictType}
                   onChange={(e) => setDictType(e.target.value as DictionaryType)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
                   <option value="twl06">TWL06 (Tournament Word List)</option>
                   <option value="enable">ENABLE</option>
@@ -252,7 +252,7 @@ export default function Home() {
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Minimum Word Length: {minLength}
                 </label>
                 <input
@@ -277,15 +277,15 @@ export default function Home() {
 
             {/* Error Display */}
             {error && (
-              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+              <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm">
                 {error}
               </div>
             )}
           </div>
 
           {/* Tiles Display */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-2xl font-semibold mb-4 text-gray-800">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-white">
               Extracted Tiles ({tiles.length})
             </h2>
             {tiles.length > 0 ? (
@@ -295,41 +295,41 @@ export default function Home() {
                     {row.map((tile, j) => (
                       <span
                         key={j}
-                        className="px-3 py-1 bg-blue-100 text-blue-800 rounded-lg font-mono text-sm font-semibold"
+                        className="px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-lg font-mono text-sm font-semibold"
                       >
                         {tile}
                       </span>
                     ))}
                   </div>
                 ))}
-                <div className="mt-4 text-sm text-gray-600">
+                <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
                   <p>Tiles: {tiles.join(', ')}</p>
                 </div>
               </div>
             ) : (
-              <p className="text-gray-400 italic">No tiles loaded yet</p>
+              <p className="text-gray-400 dark:text-gray-500 italic">No tiles loaded yet</p>
             )}
           </div>
         </div>
 
         {/* Debug Images Section */}
         {showDebug && debugImages.length > 0 && (
-          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-            <h2 className="text-2xl font-semibold mb-4 text-gray-800">Debug: Image Processing Steps</h2>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 mb-6">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-white">Debug: Image Processing Steps</h2>
             <div className="space-y-6">
               {Array.from({ length: 20 }, (_, tileIdx) => {
                 const tileDebugImages = debugImages.filter(img => img.tileIndex === tileIdx);
                 if (tileDebugImages.length === 0) return null;
                 
                 return (
-                  <div key={tileIdx} className="border border-gray-200 rounded-lg p-4">
-                    <h3 className="text-lg font-semibold mb-3 text-gray-700">
+                  <div key={tileIdx} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold mb-3 text-gray-700 dark:text-gray-200">
                       Tile {tileIdx + 1} {tiles[tileIdx] && `(detected: "${tiles[tileIdx]}")`}
                     </h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       {tileDebugImages.map((img, idx) => (
                         <div key={idx} className="space-y-2">
-                          <div className="border border-gray-300 rounded overflow-hidden bg-gray-50">
+                          <div className="border border-gray-300 dark:border-gray-600 rounded overflow-hidden bg-gray-50 dark:bg-gray-700">
                             <img
                               src={img.imageData}
                               alt={img.description}
@@ -337,8 +337,8 @@ export default function Home() {
                               style={{ imageRendering: 'pixelated' }}
                             />
                           </div>
-                          <p className="text-xs text-gray-600 font-mono">{img.step}</p>
-                          <p className="text-xs text-gray-500">{img.description}</p>
+                          <p className="text-xs text-gray-600 dark:text-gray-400 font-mono">{img.step}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-500">{img.description}</p>
                         </div>
                       ))}
                     </div>
@@ -351,14 +351,14 @@ export default function Home() {
 
         {/* Results Section */}
         {totalFound > 0 && (
-          <div className="bg-white rounded-xl shadow-lg p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
             <div className="mb-6">
-              <h2 className="text-2xl font-semibold mb-2 text-gray-800">Results</h2>
-              <div className="flex gap-4 text-sm text-gray-600">
-                <span>Total words: <strong className="text-gray-900">{totalFound}</strong></span>
-                <span>Dictionary: <strong className="text-gray-900">{dictionarySize.toLocaleString()}</strong> words</span>
+              <h2 className="text-2xl font-semibold mb-2 text-gray-800 dark:text-white">Results</h2>
+              <div className="flex gap-4 text-sm text-gray-600 dark:text-gray-400">
+                <span>Total words: <strong className="text-gray-900 dark:text-white">{totalFound}</strong></span>
+                <span>Dictionary: <strong className="text-gray-900 dark:text-white">{dictionarySize.toLocaleString()}</strong> words</span>
                 {questionableCount > 0 && (
-                  <span className="text-amber-600">
+                  <span className="text-amber-600 dark:text-amber-400">
                     Review needed: <strong>{questionableCount}</strong>
                   </span>
                 )}
@@ -371,10 +371,10 @@ export default function Home() {
 
               return (
                 <div key={numTiles} className="mb-8">
-                  <h3 className="text-xl font-semibold mb-3 text-gray-700">
+                  <h3 className="text-xl font-semibold mb-3 text-gray-700 dark:text-gray-200">
                     {numTiles} Tile Combination{numTiles > 1 ? 's' : ''} ({tileResults.length})
                   </h3>
-                  <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
                     <div 
                       className={`font-mono text-sm gap-6 ${
                         numTiles === 4 
@@ -390,21 +390,21 @@ export default function Home() {
                           <div
                             key={idx}
                             className={`py-0.5 break-inside-avoid whitespace-nowrap flex ${
-                              hasTags ? 'text-amber-700' : 'text-gray-800'
+                              hasTags ? 'text-amber-700 dark:text-amber-400' : 'text-gray-800 dark:text-gray-200'
                             }`}
                           >
                             <span 
-                              className="text-gray-500 text-right"
+                              className="text-gray-500 dark:text-gray-400 text-right"
                               style={{ 
                                 minWidth: numTiles === 1 ? '2.5rem' : numTiles === 2 ? '5.5rem' : numTiles === 3 ? '9rem' : '12.5rem'
                               }}
                             >
                               {leftSide}
                             </span>
-                            <span className="text-gray-400 mx-1">=</span>
+                            <span className="text-gray-400 dark:text-gray-500 mx-1">=</span>
                             <span className="font-semibold">{result.word}</span>
                             {hasTags && (
-                              <span className="text-xs text-amber-600 ml-1">
+                              <span className="text-xs text-amber-600 dark:text-amber-400 ml-1">
                                 [{result.tags.join(', ')}]
                               </span>
                             )}
