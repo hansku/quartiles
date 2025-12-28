@@ -1,10 +1,53 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { extractTilesFromImage } from '@/lib/ocr';
+import { extractTilesFromImage, PreprocessingMode, ScalingMode } from '@/lib/ocr';
 import { solveQuartiles, WordResult } from '@/lib/solver';
 import { DictionaryType } from '@/lib/dictionary';
 import type { DebugImage } from '@/lib/tile-detector';
+
+// Settings interface for localStorage persistence
+interface AppSettings {
+  dictType: DictionaryType;
+  minLength: number;
+  psmMode: number;
+  showDebug: boolean;
+  preprocessingMode: PreprocessingMode;
+  scalingMode: ScalingMode;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  dictType: 'twl06',
+  minLength: 2,
+  psmMode: 6,
+  showDebug: false,
+  preprocessingMode: 'original',
+  scalingMode: 'none',
+};
+
+const SETTINGS_KEY = 'quartiles-solver-settings';
+
+function loadSettings(): AppSettings {
+  if (typeof window === 'undefined') return DEFAULT_SETTINGS;
+  try {
+    const saved = localStorage.getItem(SETTINGS_KEY);
+    if (saved) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+    }
+  } catch (e) {
+    console.warn('Failed to load settings:', e);
+  }
+  return DEFAULT_SETTINGS;
+}
+
+function saveSettings(settings: AppSettings): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch (e) {
+    console.warn('Failed to save settings:', e);
+  }
+}
 
 export default function Home() {
   const [tiles, setTiles] = useState<string[]>([]);
@@ -15,32 +58,44 @@ export default function Home() {
   const [totalFound, setTotalFound] = useState(0);
   const [questionableCount, setQuestionableCount] = useState(0);
   const [dictionarySize, setDictionarySize] = useState(0);
-  const [dictType, setDictType] = useState<DictionaryType>('twl06');
-  const [minLength, setMinLength] = useState(2);
-  const [psmMode, setPsmMode] = useState(6);
+  const [dictType, setDictType] = useState<DictionaryType>(DEFAULT_SETTINGS.dictType);
+  const [minLength, setMinLength] = useState(DEFAULT_SETTINGS.minLength);
+  const [psmMode, setPsmMode] = useState(DEFAULT_SETTINGS.psmMode);
   const [error, setError] = useState<string>('');
   const [imagePreview, setImagePreview] = useState<string>('');
   const [ocrStatus, setOcrStatus] = useState<string>('');
-  const [showDebug, setShowDebug] = useState(false);
+  const [showDebug, setShowDebug] = useState(DEFAULT_SETTINGS.showDebug);
+  const [preprocessingMode, setPreprocessingMode] = useState<PreprocessingMode>(DEFAULT_SETTINGS.preprocessingMode);
+  const [scalingMode, setScalingMode] = useState<ScalingMode>(DEFAULT_SETTINGS.scalingMode);
   const [debugImages, setDebugImages] = useState<DebugImage[]>([]);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [currentFile, setCurrentFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Load settings from localStorage on mount
+  useEffect(() => {
+    const settings = loadSettings();
+    setDictType(settings.dictType);
+    setMinLength(settings.minLength);
+    setPsmMode(settings.psmMode);
+    setShowDebug(settings.showDebug);
+    setPreprocessingMode(settings.preprocessingMode);
+    setScalingMode(settings.scalingMode);
+    setSettingsLoaded(true);
+  }, []);
 
-    // Clean up previous preview URL
-    if (imagePreview) {
-      URL.revokeObjectURL(imagePreview);
-    }
+  // Save settings to localStorage when they change
+  useEffect(() => {
+    if (!settingsLoaded) return; // Don't save during initial load
+    saveSettings({ dictType, minLength, psmMode, showDebug, preprocessingMode, scalingMode });
+  }, [dictType, minLength, psmMode, showDebug, preprocessingMode, scalingMode, settingsLoaded]);
 
-    // Create preview URL
-    const previewUrl = URL.createObjectURL(file);
-    setImagePreview(previewUrl);
-
+  // Process a file with OCR
+  const processFile = async (file: File, preprocessing: PreprocessingMode, scaling: ScalingMode) => {
     setLoading(true);
     setError('');
     setOcrStatus('Starting OCR...');
+    setDebugImages([]);
     
     try {
       setOcrStatus('Detecting tile regions...');
@@ -49,16 +104,18 @@ export default function Home() {
         psmMode,
         5, // expectedRows
         4, // expectedCols
-        showDebug // enableDebug
+        showDebug, // enableDebug
+        preprocessing,
+        scaling
       );
       if (result.tiles.length === 0) {
-        setError('No tiles found in the image. Try a different PSM mode or use manual entry.');
+        setError('No tiles found in the image. Try a different preprocessing mode or use manual entry.');
         setOcrStatus('');
       } else {
         setTiles(result.tiles);
         // Prefill manual entry box with detected tiles for easy editing
         setManualTiles(result.tiles.join(' '));
-        setOcrStatus(`✓ Successfully extracted ${result.tiles.length} tiles using ${result.method}`);
+        setOcrStatus(`✓ Extracted ${result.tiles.length} tiles (${preprocessing}${scaling === 'auto' ? ', auto-scaled' : ''})`);
         // Set debug images if available
         if (result.debugImages) {
           setDebugImages(result.debugImages);
@@ -70,6 +127,36 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Re-process when preprocessing or scaling mode changes and we have a file
+  useEffect(() => {
+    if (!settingsLoaded || !currentFile || loading) return;
+    processFile(currentFile, preprocessingMode, scalingMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preprocessingMode, scalingMode]);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset the file input so the same file can be re-uploaded
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    // Clean up previous preview URL
+    if (imagePreview) {
+      URL.revokeObjectURL(imagePreview);
+    }
+
+    // Create preview URL and store the file
+    const previewUrl = URL.createObjectURL(file);
+    setImagePreview(previewUrl);
+    setCurrentFile(file);
+
+    // Process the file
+    await processFile(file, preprocessingMode, scalingMode);
   };
 
   const handleManualTiles = () => {
@@ -151,7 +238,7 @@ export default function Home() {
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Upload Puzzle Image
               </label>
-              <div className="flex items-center gap-4 mb-4">
+              <div className="flex flex-wrap items-center gap-3 mb-4">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -167,13 +254,25 @@ export default function Home() {
                   {loading ? 'Processing...' : 'Choose Image'}
                 </button>
                 <select
-                  value={psmMode}
-                  onChange={(e) => setPsmMode(Number(e.target.value))}
+                  value={preprocessingMode}
+                  onChange={(e) => setPreprocessingMode(e.target.value as PreprocessingMode)}
                   className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  title="Image preprocessing for OCR"
                 >
-                  <option value={6}>PSM 6 (Uniform Block)</option>
-                  <option value={4}>PSM 4 (Single Column)</option>
-                  <option value={11}>PSM 11 (Sparse Text)</option>
+                  <option value="original">No Processing</option>
+                  <option value="binary">Binary (B&W)</option>
+                  <option value="contrast">Contrast</option>
+                  <option value="adaptive">Adaptive</option>
+                  <option value="auto">Auto (Try All)</option>
+                </select>
+                <select
+                  value={scalingMode}
+                  onChange={(e) => setScalingMode(e.target.value as ScalingMode)}
+                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  title="Tile scaling for OCR"
+                >
+                  <option value="none">No Scaling</option>
+                  <option value="auto">Auto Scale</option>
                 </select>
                 <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                   <input
@@ -182,7 +281,7 @@ export default function Home() {
                     onChange={(e) => setShowDebug(e.target.checked)}
                     className="rounded"
                   />
-                  <span>Debug Images</span>
+                  <span>Debug</span>
                 </label>
               </div>
               {imagePreview && (

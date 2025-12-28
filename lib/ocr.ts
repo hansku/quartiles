@@ -23,6 +23,9 @@ import {
   type DebugImage
 } from './tile-detector';
 
+export type PreprocessingMode = 'original' | 'binary' | 'contrast' | 'adaptive' | 'auto';
+export type ScalingMode = 'none' | 'auto';
+
 interface OCRStrategy {
   name: string;
   preprocessing: 'contrast' | 'binary' | 'adaptive' | 'original';
@@ -30,20 +33,28 @@ interface OCRStrategy {
   confidenceThreshold: number;
 }
 
-// Ordered by effectiveness - most reliable strategies first
-const STRATEGIES: OCRStrategy[] = [
-  // Binary preprocessing first (pure black/white) - often best for character recognition
-  { name: 'binary-psm7', preprocessing: 'binary', psmMode: 7, confidenceThreshold: 5 },
-  { name: 'binary-psm8', preprocessing: 'binary', psmMode: 8, confidenceThreshold: 5 },
-  // Contrast preprocessing - good for enhancing text visibility
-  { name: 'contrast-psm7', preprocessing: 'contrast', psmMode: 7, confidenceThreshold: 5 },
-  { name: 'contrast-psm8', preprocessing: 'contrast', psmMode: 8, confidenceThreshold: 5 },
-  // Adaptive and original preprocessing variants
-  { name: 'adaptive-psm7', preprocessing: 'adaptive', psmMode: 7, confidenceThreshold: 5 },
-  { name: 'adaptive-psm8', preprocessing: 'adaptive', psmMode: 8, confidenceThreshold: 5 },
-  { name: 'original-psm7', preprocessing: 'original', psmMode: 7, confidenceThreshold: 5 },
-  { name: 'original-psm8', preprocessing: 'original', psmMode: 8, confidenceThreshold: 5 },
-];
+// Build strategies based on preprocessing mode
+function getStrategies(preprocessingMode: PreprocessingMode): OCRStrategy[] {
+  if (preprocessingMode === 'auto') {
+    // Try all preprocessing modes, ordered by typical effectiveness
+    return [
+      { name: 'binary-psm7', preprocessing: 'binary', psmMode: 7, confidenceThreshold: 5 },
+      { name: 'binary-psm8', preprocessing: 'binary', psmMode: 8, confidenceThreshold: 5 },
+      { name: 'contrast-psm7', preprocessing: 'contrast', psmMode: 7, confidenceThreshold: 5 },
+      { name: 'contrast-psm8', preprocessing: 'contrast', psmMode: 8, confidenceThreshold: 5 },
+      { name: 'adaptive-psm7', preprocessing: 'adaptive', psmMode: 7, confidenceThreshold: 5 },
+      { name: 'adaptive-psm8', preprocessing: 'adaptive', psmMode: 8, confidenceThreshold: 5 },
+      { name: 'original-psm7', preprocessing: 'original', psmMode: 7, confidenceThreshold: 5 },
+      { name: 'original-psm8', preprocessing: 'original', psmMode: 8, confidenceThreshold: 5 },
+    ];
+  }
+  
+  // Use only the specified preprocessing mode with both PSM modes
+  return [
+    { name: `${preprocessingMode}-psm7`, preprocessing: preprocessingMode, psmMode: 7, confidenceThreshold: 5 },
+    { name: `${preprocessingMode}-psm8`, preprocessing: preprocessingMode, psmMode: 8, confidenceThreshold: 5 },
+  ];
+}
 
 // High confidence threshold - if we exceed this, skip remaining strategies for the tile
 const HIGH_CONFIDENCE_THRESHOLD = 80;
@@ -119,6 +130,7 @@ function prepareTileForOCR(
   region: TileRegion,
   strategy: OCRStrategy,
   tileIndex: number,
+  scalingMode: ScalingMode = 'none',
   debugImages?: DebugImage[]
 ): HTMLCanvasElement {
   // Extract the region - use minimal crop to avoid reading adjacent tiles
@@ -142,60 +154,70 @@ function prepareTileForOCR(
     });
   }
   
-  // Scale to optimal size for OCR
+  // Scale to optimal size for OCR (only if auto scaling is enabled)
   let finalCanvas = regionCanvas;
-  const minSize = 150;
-  const maxSize = 300;
-  const optimalSize = 250;
   
-  const currentMin = Math.min(regionCanvas.width, regionCanvas.height);
-  const currentMax = Math.max(regionCanvas.width, regionCanvas.height);
-  
-  if (currentMin < minSize) {
-    const scale = Math.min(5, minSize / currentMin);
-    const scaledCanvas = document.createElement('canvas');
-    scaledCanvas.width = Math.round(regionCanvas.width * scale);
-    scaledCanvas.height = Math.round(regionCanvas.height * scale);
-    const ctx = scaledCanvas.getContext('2d');
-    if (ctx) {
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(regionCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
-      finalCanvas = scaledCanvas;
-      if (debugImages) {
-        debugImages.push({
-          tileIndex,
-          step: 'scaled-up',
-          imageData: canvasToDataUrl(finalCanvas),
-          description: `Scaled up ${scale.toFixed(2)}x (${finalCanvas.width}x${finalCanvas.height}px)`
-        });
+  if (scalingMode === 'auto') {
+    const minSize = 150;
+    const maxSize = 300;
+    const optimalSize = 250;
+    
+    const currentMin = Math.min(regionCanvas.width, regionCanvas.height);
+    const currentMax = Math.max(regionCanvas.width, regionCanvas.height);
+    
+    if (currentMin < minSize) {
+      const scale = Math.min(5, minSize / currentMin);
+      const scaledCanvas = document.createElement('canvas');
+      scaledCanvas.width = Math.round(regionCanvas.width * scale);
+      scaledCanvas.height = Math.round(regionCanvas.height * scale);
+      const ctx = scaledCanvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(regionCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+        finalCanvas = scaledCanvas;
+        if (debugImages) {
+          debugImages.push({
+            tileIndex,
+            step: 'scaled-up',
+            imageData: canvasToDataUrl(finalCanvas),
+            description: `Scaled up ${scale.toFixed(2)}x (${finalCanvas.width}x${finalCanvas.height}px)`
+          });
+        }
       }
-    }
-  } else if (currentMax > maxSize) {
-    const scale = optimalSize / currentMax;
-    const scaledCanvas = document.createElement('canvas');
-    scaledCanvas.width = Math.round(regionCanvas.width * scale);
-    scaledCanvas.height = Math.round(regionCanvas.height * scale);
-    const ctx = scaledCanvas.getContext('2d');
-    if (ctx) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(regionCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
-      finalCanvas = scaledCanvas;
-      if (debugImages) {
-        debugImages.push({
-          tileIndex,
-          step: 'scaled-down',
-          imageData: canvasToDataUrl(finalCanvas),
-          description: `Scaled down ${scale.toFixed(2)}x (${finalCanvas.width}x${finalCanvas.height}px)`
-        });
+    } else if (currentMax > maxSize) {
+      const scale = optimalSize / currentMax;
+      const scaledCanvas = document.createElement('canvas');
+      scaledCanvas.width = Math.round(regionCanvas.width * scale);
+      scaledCanvas.height = Math.round(regionCanvas.height * scale);
+      const ctx = scaledCanvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(regionCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+        finalCanvas = scaledCanvas;
+        if (debugImages) {
+          debugImages.push({
+            tileIndex,
+            step: 'scaled-down',
+            imageData: canvasToDataUrl(finalCanvas),
+            description: `Scaled down ${scale.toFixed(2)}x (${finalCanvas.width}x${finalCanvas.height}px)`
+          });
+        }
       }
+    } else if (debugImages) {
+      debugImages.push({
+        tileIndex,
+        step: 'no-scaling',
+        imageData: canvasToDataUrl(finalCanvas),
+        description: `No scaling needed (${finalCanvas.width}x${finalCanvas.height}px)`
+      });
     }
   } else if (debugImages) {
     debugImages.push({
       tileIndex,
-      step: 'no-scaling',
+      step: 'scaling-disabled',
       imageData: canvasToDataUrl(finalCanvas),
-      description: `No scaling needed (${finalCanvas.width}x${finalCanvas.height}px)`
+      description: `Scaling disabled (${finalCanvas.width}x${finalCanvas.height}px)`
     });
   }
   
@@ -264,6 +286,17 @@ function parseOCRResult(data: any): { text: string | null; confidence: number } 
   let symbolText = '';
   let symbolConfSum = 0;
   const symbolConfs: number[] = [];
+  
+  // Debug: log symbol details including alternatives
+  if (sortedSymbols.length > 0) {
+    const symbolDetails = sortedSymbols.map(s => {
+      const char = (s.text || '').trim().toLowerCase();
+      const conf = (s.confidence || 0).toFixed(1);
+      const choices = s.choices?.slice(0, 3).map((c: any) => `${c.text}:${c.confidence?.toFixed(0)}`).join(',') || 'no-alts';
+      return `${char}(${conf}%)[${choices}]`;
+    }).join(' ');
+    console.log(`Symbols: ${symbolDetails}`);
+  }
   
   for (const symbol of sortedSymbols) {
     const text = (symbol.text || '').trim().toLowerCase();
@@ -378,7 +411,9 @@ export async function extractTilesFromImage(
   psmMode: number = 6,
   expectedRows: number = 5,
   expectedCols: number = 4,
-  enableDebug: boolean = false
+  enableDebug: boolean = false,
+  preprocessingMode: PreprocessingMode = 'original',
+  scalingMode: ScalingMode = 'none'
 ): Promise<DetectionResult> {
   const totalStartTime = performance.now();
   
@@ -392,6 +427,10 @@ export async function extractTilesFromImage(
     return { tiles: [], regions: [], method: 'none' };
   }
   
+  // Get strategies based on preprocessing mode
+  const strategies = getStrategies(preprocessingMode);
+  console.log(`Using preprocessing mode: ${preprocessingMode} (${strategies.length} strategies)`);
+  
   // Initialize worker pool
   const pool = new WorkerPool();
   await pool.initialize(WORKER_POOL_SIZE);
@@ -403,7 +442,7 @@ export async function extractTilesFromImage(
     const allDebugImages: DebugImage[] = [];
     
     // Process strategies in order
-    for (const strategy of STRATEGIES) {
+    for (const strategy of strategies) {
       // Find tiles that still need processing
       const tilesToProcess: number[] = [];
       for (let i = 0; i < regions.length; i++) {
@@ -429,6 +468,7 @@ export async function extractTilesFromImage(
           regions[tileIndex],
           strategy,
           tileIndex,
+          scalingMode,
           enableDebug ? allDebugImages : undefined
         ),
         strategy
