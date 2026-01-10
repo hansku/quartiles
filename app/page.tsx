@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { extractTilesFromImage, PreprocessingMode, ScalingMode } from '@/lib/ocr';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { extractTilesFromImage, PreprocessingMode, ScalingMode, terminateOCRWorkers } from '@/lib/ocr';
 import { solveQuartiles, WordResult } from '@/lib/solver';
 import { DictionaryType } from '@/lib/dictionary';
 import type { DebugImage } from '@/lib/tile-detector';
+
+// Debounce delay for re-processing when settings change (ms)
+const REPROCESS_DEBOUNCE_MS = 300;
 
 // Settings interface for localStorage persistence
 interface AppSettings {
@@ -130,9 +133,15 @@ export default function Home() {
   };
 
   // Re-process when preprocessing or scaling mode changes and we have a file
+  // Debounced to prevent rapid successive OCR calls when quickly changing modes
   useEffect(() => {
     if (!settingsLoaded || !currentFile || loading) return;
-    processFile(currentFile, preprocessingMode, scalingMode);
+    
+    const debounceTimer = setTimeout(() => {
+      processFile(currentFile, preprocessingMode, scalingMode);
+    }, REPROCESS_DEBOUNCE_MS);
+    
+    return () => clearTimeout(debounceTimer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preprocessingMode, scalingMode]);
 
@@ -196,12 +205,14 @@ export default function Home() {
     }
   };
 
-  // Cleanup image preview URL on unmount
+  // Cleanup image preview URL and OCR workers on unmount
   useEffect(() => {
     return () => {
       if (imagePreview) {
         URL.revokeObjectURL(imagePreview);
       }
+      // Terminate OCR workers to free memory when leaving the page
+      terminateOCRWorkers();
     };
   }, [imagePreview]);
 

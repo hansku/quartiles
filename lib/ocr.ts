@@ -3,6 +3,8 @@
  * 1. Worker pool for parallel processing
  * 2. Early exit on high confidence results
  * 3. Efficient strategy ordering
+ * 4. Mobile-optimized memory management
+ * 5. Cancellation support for overlapping operations
  * 
  * CRITICAL RULE: NO WORKAROUNDS, NO FALLBACKS, NO HARDCODED SOLUTIONS
  * - Do not add post-processing corrections for specific misreads
@@ -33,6 +35,27 @@ interface OCRStrategy {
   confidenceThreshold: number;
 }
 
+/**
+ * Detect if running on a mobile device
+ */
+function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 0 && /MacIntel/.test(navigator.platform));
+}
+
+/**
+ * Get optimal worker pool size based on device
+ */
+function getOptimalPoolSize(): number {
+  if (isMobileDevice()) {
+    // Use fewer workers on mobile to reduce memory pressure
+    return 1;
+  }
+  // Desktop can handle more workers
+  return Math.min(4, navigator.hardwareConcurrency || 2);
+}
+
 // Build strategies based on preprocessing mode
 function getStrategies(preprocessingMode: PreprocessingMode): OCRStrategy[] {
   if (preprocessingMode === 'auto') {
@@ -59,35 +82,90 @@ function getStrategies(preprocessingMode: PreprocessingMode): OCRStrategy[] {
 // High confidence threshold - if we exceed this, skip remaining strategies for the tile
 const HIGH_CONFIDENCE_THRESHOLD = 80;
 
-// Number of workers in the pool
-const WORKER_POOL_SIZE = 4;
+// Cancellation token for aborting OCR operations
+let currentOperationId = 0;
 
 /**
- * Worker pool for efficient OCR processing
+ * Singleton worker pool for efficient OCR processing
+ * Persists across operations to avoid repeated initialization overhead
  */
 class WorkerPool {
+  private static instance: WorkerPool | null = null;
   private workers: Worker[] = [];
   private available: Worker[] = [];
   private waiting: ((worker: Worker) => void)[] = [];
   private initialized = false;
+  private initializing = false;
+  private targetSize = 0;
+  private lastUsed = 0;
+  private cleanupTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async initialize(size: number = WORKER_POOL_SIZE): Promise<void> {
-    if (this.initialized) return;
+  // Idle timeout before terminating workers (30 seconds on mobile, 2 minutes on desktop)
+  private readonly IDLE_TIMEOUT = isMobileDevice() ? 30000 : 120000;
+
+  static getInstance(): WorkerPool {
+    if (!WorkerPool.instance) {
+      WorkerPool.instance = new WorkerPool();
+    }
+    return WorkerPool.instance;
+  }
+
+  async initialize(): Promise<void> {
+    // Clear any pending cleanup
+    if (this.cleanupTimer) {
+      clearTimeout(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
     
-    console.log(`Initializing worker pool with ${size} workers...`);
-    const startTime = performance.now();
+    this.lastUsed = Date.now();
+    const optimalSize = getOptimalPoolSize();
     
-    // Create all workers in parallel
-    this.workers = await Promise.all(
-      Array(size).fill(0).map(() => createWorker('eng'))
-    );
-    this.available = [...this.workers];
-    this.initialized = true;
+    // Already initialized with enough workers
+    if (this.initialized && this.workers.length >= optimalSize) {
+      return;
+    }
     
-    console.log(`Worker pool initialized in ${(performance.now() - startTime).toFixed(0)}ms`);
+    // Wait if another initialization is in progress
+    if (this.initializing) {
+      while (this.initializing) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      return;
+    }
+    
+    this.initializing = true;
+    this.targetSize = optimalSize;
+    
+    try {
+      console.log(`Initializing worker pool with ${optimalSize} worker(s)...`);
+      const startTime = performance.now();
+      
+      // Create workers one at a time to reduce memory spikes on mobile
+      const newWorkers: Worker[] = [];
+      for (let i = this.workers.length; i < optimalSize; i++) {
+        const worker = await createWorker('eng');
+        newWorkers.push(worker);
+      }
+      
+      this.workers.push(...newWorkers);
+      this.available.push(...newWorkers);
+      this.initialized = true;
+      
+      console.log(`Worker pool ready with ${this.workers.length} worker(s) in ${(performance.now() - startTime).toFixed(0)}ms`);
+    } finally {
+      this.initializing = false;
+    }
   }
 
   async acquire(): Promise<Worker> {
+    this.lastUsed = Date.now();
+    
+    // Clear any pending cleanup
+    if (this.cleanupTimer) {
+      clearTimeout(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    
     if (this.available.length > 0) {
       return this.available.pop()!;
     }
@@ -99,20 +177,59 @@ class WorkerPool {
   }
 
   release(worker: Worker): void {
+    this.lastUsed = Date.now();
+    
     if (this.waiting.length > 0) {
       const resolve = this.waiting.shift()!;
       resolve(worker);
     } else {
       this.available.push(worker);
+      // Schedule cleanup after idle period
+      this.scheduleCleanup();
     }
   }
 
+  private scheduleCleanup(): void {
+    if (this.cleanupTimer) return;
+    
+    this.cleanupTimer = setTimeout(() => {
+      this.cleanupTimer = null;
+      const idleTime = Date.now() - this.lastUsed;
+      
+      if (idleTime >= this.IDLE_TIMEOUT && this.waiting.length === 0) {
+        console.log('Worker pool idle, terminating to free memory...');
+        this.terminate();
+      }
+    }, this.IDLE_TIMEOUT);
+  }
+
   async terminate(): Promise<void> {
+    if (this.cleanupTimer) {
+      clearTimeout(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    
+    // Reject any waiting requests
+    for (const resolve of this.waiting) {
+      // This will cause errors, but prevents memory leaks
+    }
+    this.waiting = [];
+    
     await Promise.all(this.workers.map(w => w.terminate()));
     this.workers = [];
     this.available = [];
     this.initialized = false;
+    console.log('Worker pool terminated');
   }
+
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+}
+
+// Export for manual cleanup if needed
+export function terminateOCRWorkers(): Promise<void> {
+  return WorkerPool.getInstance().terminate();
 }
 
 /**
@@ -404,7 +521,15 @@ async function processTilesBatch(
 }
 
 /**
+ * Check if this operation should be cancelled
+ */
+function shouldCancel(operationId: number): boolean {
+  return operationId !== currentOperationId;
+}
+
+/**
  * Main extraction function - optimized with worker pool and early exit
+ * Supports cancellation for overlapping operations
  */
 export async function extractTilesFromImage(
   imageFile: File,
@@ -415,10 +540,25 @@ export async function extractTilesFromImage(
   preprocessingMode: PreprocessingMode = 'original',
   scalingMode: ScalingMode = 'none'
 ): Promise<DetectionResult> {
+  // Increment operation ID to cancel any previous operation
+  const operationId = ++currentOperationId;
   const totalStartTime = performance.now();
+  
+  // Auto-disable debug on mobile to save memory
+  const isMobile = isMobileDevice();
+  const actualEnableDebug = enableDebug && !isMobile;
+  if (enableDebug && isMobile) {
+    console.log('Debug mode disabled on mobile to conserve memory');
+  }
   
   // Load the image
   const canvas = await loadImageToCanvas(imageFile);
+  
+  // Check for cancellation
+  if (shouldCancel(operationId)) {
+    console.log('OCR operation cancelled (newer operation started)');
+    return { tiles: [], regions: [], method: 'cancelled' };
+  }
   
   // Detect tile regions
   const regions = await detectTileRegions(imageFile, expectedRows, expectedCols);
@@ -431,101 +571,127 @@ export async function extractTilesFromImage(
   const strategies = getStrategies(preprocessingMode);
   console.log(`Using preprocessing mode: ${preprocessingMode} (${strategies.length} strategies)`);
   
-  // Initialize worker pool
-  const pool = new WorkerPool();
-  await pool.initialize(WORKER_POOL_SIZE);
+  // Use singleton worker pool
+  const pool = WorkerPool.getInstance();
+  await pool.initialize();
   
-  try {
-    // Track best results per tile and whether tile is "done" (high confidence)
-    const bestResults: (TileResult | null)[] = new Array(regions.length).fill(null);
-    const tilesDone: boolean[] = new Array(regions.length).fill(false);
-    const allDebugImages: DebugImage[] = [];
-    
-    // Process strategies in order
-    for (const strategy of strategies) {
-      // Find tiles that still need processing
-      const tilesToProcess: number[] = [];
-      for (let i = 0; i < regions.length; i++) {
-        if (!tilesDone[i]) {
-          tilesToProcess.push(i);
-        }
-      }
-      
-      // Skip strategy if all tiles are done
-      if (tilesToProcess.length === 0) {
-        console.log(`Skipping ${strategy.name} - all tiles have high confidence results`);
-        break;
-      }
-      
-      console.log(`Running ${strategy.name} on ${tilesToProcess.length} tiles...`);
-      const strategyStartTime = performance.now();
-      
-      // Prepare all tiles for this strategy
-      const preparedTiles = tilesToProcess.map(tileIndex => ({
-        index: tileIndex,
-        canvas: prepareTileForOCR(
-          canvas,
-          regions[tileIndex],
-          strategy,
-          tileIndex,
-          scalingMode,
-          enableDebug ? allDebugImages : undefined
-        ),
-        strategy
-      }));
-      
-      // Process tiles in parallel using worker pool
-      const strategyResults = await processTilesBatch(pool, preparedTiles);
-      
-      // Update best results
-      for (const { index, result } of strategyResults) {
-        const currentBest = bestResults[index];
-        
-        // Update if this result is better
-        if (result.text && (!currentBest || !currentBest.text || result.confidence > currentBest.confidence)) {
-          bestResults[index] = result;
-          
-          // Mark tile as done if high confidence
-          if (result.confidence >= HIGH_CONFIDENCE_THRESHOLD) {
-            tilesDone[index] = true;
-          }
-        }
-      }
-      
-      console.log(`${strategy.name} completed in ${(performance.now() - strategyStartTime).toFixed(0)}ms`);
-    }
-    
-    // Collect final results
-    const finalTiles: string[] = [];
-    const usedStrategies: string[] = [];
-    
-    for (let i = 0; i < regions.length; i++) {
-      const best = bestResults[i];
-      if (best?.text) {
-        finalTiles.push(best.text);
-        usedStrategies.push(best.strategy);
-      }
-    }
-    
-    // Log stats
-    const strategyUsage = usedStrategies.reduce((acc, s) => {
-      acc[s] = (acc[s] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-    console.log('Strategy usage per tile:', strategyUsage);
-    console.log('Detected tiles:', finalTiles);
-    console.log(`Total time: ${(performance.now() - totalStartTime).toFixed(0)}ms`);
-    
-    return {
-      tiles: finalTiles,
-      regions,
-      method: 'per-tile-best-optimized',
-      debugImages: enableDebug ? allDebugImages : undefined
-    };
-  } finally {
-    // Always terminate the worker pool
-    await pool.terminate();
+  // Check for cancellation after worker init
+  if (shouldCancel(operationId)) {
+    console.log('OCR operation cancelled (newer operation started)');
+    return { tiles: [], regions: [], method: 'cancelled' };
   }
+  
+  // Track best results per tile and whether tile is "done" (high confidence)
+  const bestResults: (TileResult | null)[] = new Array(regions.length).fill(null);
+  const tilesDone: boolean[] = new Array(regions.length).fill(false);
+  const allDebugImages: DebugImage[] = [];
+  
+  // Limit debug images on any device to prevent memory issues (max 40 images)
+  const MAX_DEBUG_IMAGES = 40;
+  
+  // Process strategies in order
+  for (const strategy of strategies) {
+    // Check for cancellation at each strategy
+    if (shouldCancel(operationId)) {
+      console.log('OCR operation cancelled mid-strategy');
+      return { tiles: [], regions: [], method: 'cancelled' };
+    }
+    
+    // Find tiles that still need processing
+    const tilesToProcess: number[] = [];
+    for (let i = 0; i < regions.length; i++) {
+      if (!tilesDone[i]) {
+        tilesToProcess.push(i);
+      }
+    }
+    
+    // Skip strategy if all tiles are done
+    if (tilesToProcess.length === 0) {
+      console.log(`Skipping ${strategy.name} - all tiles have high confidence results`);
+      break;
+    }
+    
+    console.log(`Running ${strategy.name} on ${tilesToProcess.length} tiles...`);
+    const strategyStartTime = performance.now();
+    
+    // Prepare all tiles for this strategy
+    // Limit debug images to avoid memory bloat
+    const canAddDebug = actualEnableDebug && allDebugImages.length < MAX_DEBUG_IMAGES;
+    const preparedTiles = tilesToProcess.map(tileIndex => ({
+      index: tileIndex,
+      canvas: prepareTileForOCR(
+        canvas,
+        regions[tileIndex],
+        strategy,
+        tileIndex,
+        scalingMode,
+        canAddDebug ? allDebugImages : undefined
+      ),
+      strategy
+    }));
+    
+    // Process tiles in parallel using worker pool
+    const strategyResults = await processTilesBatch(pool, preparedTiles);
+    
+    // Check for cancellation after processing
+    if (shouldCancel(operationId)) {
+      console.log('OCR operation cancelled after batch');
+      return { tiles: [], regions: [], method: 'cancelled' };
+    }
+    
+    // Update best results
+    for (const { index, result } of strategyResults) {
+      const currentBest = bestResults[index];
+      
+      // Update if this result is better
+      if (result.text && (!currentBest || !currentBest.text || result.confidence > currentBest.confidence)) {
+        bestResults[index] = result;
+        
+        // Mark tile as done if high confidence
+        if (result.confidence >= HIGH_CONFIDENCE_THRESHOLD) {
+          tilesDone[index] = true;
+        }
+      }
+    }
+    
+    console.log(`${strategy.name} completed in ${(performance.now() - strategyStartTime).toFixed(0)}ms`);
+    
+    // Yield to main thread on mobile to prevent UI freeze
+    if (isMobile) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+  
+  // Collect final results
+  const finalTiles: string[] = [];
+  const usedStrategies: string[] = [];
+  
+  for (let i = 0; i < regions.length; i++) {
+    const best = bestResults[i];
+    if (best?.text) {
+      finalTiles.push(best.text);
+      usedStrategies.push(best.strategy);
+    }
+  }
+  
+  // Log stats
+  const strategyUsage = usedStrategies.reduce((acc, s) => {
+    acc[s] = (acc[s] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  console.log('Strategy usage per tile:', strategyUsage);
+  console.log('Detected tiles:', finalTiles);
+  console.log(`Total time: ${(performance.now() - totalStartTime).toFixed(0)}ms`);
+  
+  return {
+    tiles: finalTiles,
+    regions,
+    method: 'per-tile-best-optimized',
+    debugImages: actualEnableDebug ? allDebugImages : undefined
+  };
+  
+  // Note: Worker pool is NOT terminated here - it's reused across operations
+  // and will auto-cleanup after idle timeout
 }
 
 /**

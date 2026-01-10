@@ -13,6 +13,25 @@ export interface SolveResult {
   dictionarySize: number;
 }
 
+// Yield to main thread every N iterations to prevent UI freeze
+const YIELD_INTERVAL = 1000;
+
+/**
+ * Detect if running on a mobile device
+ */
+function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 0 && /MacIntel/.test(navigator.platform));
+}
+
+/**
+ * Yield to the main thread to prevent UI freeze
+ */
+function yieldToMain(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
 function* generateCombinations(tiles: string[], maxLength: number = 4): Generator<[string[], string]> {
   function* permute(arr: string[], length: number, current: string[] = []): Generator<[string[], string]> {
     if (current.length === length) {
@@ -51,8 +70,19 @@ export async function solveQuartiles(
   };
   
   const seenWords = new Set<string>();
+  const isMobile = isMobileDevice();
+  
+  // Use smaller yield interval on mobile for smoother UI
+  const yieldInterval = isMobile ? YIELD_INTERVAL / 2 : YIELD_INTERVAL;
+  let iterationCount = 0;
   
   for (const [tilesCombo, word] of generateCombinations(tiles, 4)) {
+    // Periodically yield to main thread to prevent UI freeze
+    iterationCount++;
+    if (iterationCount % yieldInterval === 0) {
+      await yieldToMain();
+    }
+    
     if (word.length < minLength) continue;
     if (!validWords.has(word)) continue;
     if (seenWords.has(word)) continue;
